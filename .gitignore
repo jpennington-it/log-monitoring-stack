@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Generated sample logs (folder kept via .gitkeep)
+sample-logs/*.log
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

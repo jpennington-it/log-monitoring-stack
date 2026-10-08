@@ -1,0 +1,83 @@
+# Loki ruler alert rules (Prometheus rule format, LogQL expressions).
+# Thresholds are tuned for the synthetic log generator, not a real network -
+# adjust them to your own baseline before relying on them.
+groups:
+  - name: ssh-security
+    interval: 1m
+    rules:
+      - alert: SSHFailedLoginSpike
+        # Total failed SSH password attempts across all lab hosts.
+        expr: |
+          sum(count_over_time({job="sshd"} |= "Failed password" [5m])) > 20
+        for: 2m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "Spike in failed SSH logins ({{ $value }} in 5m)"
+          description: "More than 20 failed SSH password attempts in 5 minutes across lab hosts. Check the Security Overview dashboard for source addresses."
+
+      - alert: SSHBruteForceSingleSource
+        # Same signal, but grouped by source address. src_ip is extracted at
+        # query time (not stored as a label) to keep index cardinality low.
+        expr: |
+          sum by (src_ip) (
+            count_over_time(
+              {job="sshd"} |= "Failed password"
+                | regexp `from (?P<src_ip>\S+) port`
+              [5m]
+            )
+          ) > 10
+        for: 1m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "Possible SSH brute force from {{ $labels.src_ip }}"
+          description: "{{ $value }} failed SSH logins from {{ $labels.src_ip }} in 5 minutes."
+
+      - alert: SSHInvalidUserProbing
+        # Attempts against usernames that don't exist are a classic scanning pattern.
+        expr: |
+          sum(count_over_time({job="sshd"} |= "Invalid user" [10m])) > 15
+        for: 0m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "SSH username probing detected"
+          description: "{{ $value }} attempts for non-existent users in 10 minutes."
+
+  - name: web-app
+    interval: 1m
+    rules:
+      - alert: WebAppHighErrorRate
+        # Share of HTTP 5xx responses over the last 5 minutes.
+        expr: |
+          (
+            sum(count_over_time({job="webapp"} | json | status >= 500 [5m]))
+            /
+            sum(count_over_time({job="webapp"} | json [5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          category: availability
+        annotations:
+          summary: "Web app 5xx rate above 5%"
+          description: "{{ $value | humanizePercentage }} of requests returned 5xx over 5 minutes."
+
+  - name: pipeline-health
+    interval: 1m
+    rules:
+      - alert: LogSourceSilent
+        # Fires if a log source stops sending - catches a dead shipper or a stopped service.
+        expr: |
+          absent_over_time({job="sshd"}[15m])
+        for: 5m
+        labels:
+          severity: warning
+          category: pipeline
+        annotations:
+          summary: "No sshd logs received for 15 minutes"
+          description: "Check that Promtail is running and the log file is still being written."
